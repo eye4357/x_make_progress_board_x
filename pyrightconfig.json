@@ -1,0 +1,13 @@
+{
+    "include": ["."],
+    "stubPath": "../typings",
+    "executionEnvironments": [
+        {
+            "root": ".",
+            "extraPaths": [
+                ".."
+            ]
+        }
+    ],
+    "reportMissingModuleSource": "none"
+}
