@@ -31,11 +31,6 @@ The board opens in a PySide6 window and exits once all stages report completion 
 | Static contract scan | `python -m pyright` |
 | Functional verification | `pytest` |
 
-## System Linkage
-- [Changelog](./CHANGELOG.md)
-- [x_0_make_all_x/interface/gui/progress_board.py](../x_0_make_all_x/interface/gui/progress_board.py) — source implementation prior to packaging.
-- [x_make_common_x/progress_snapshot.py](../x_make_common_x/progress_snapshot.py) — snapshot schema loader.
-
 ## Reconstitution Drill
 During the monthly rebuild the board is launched standalone, pointed at a canned snapshot feed, and observed until it unlocks automatically. Logs, timestamps, and screenshot evidence are captured for Change Control.
 
