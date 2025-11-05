@@ -6,6 +6,7 @@ import argparse
 import threading
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
 from x_make_common_x.progress_snapshot import load_progress_snapshot
 
@@ -17,20 +18,24 @@ def _current_stage_layout(snapshot_path: Path) -> list[tuple[str, str]]:
     if snapshot is None:
         return []
     stages: list[tuple[str, str]] = []
-    for stage in getattr(snapshot, "stages", {}).values():
-        stage_id = str(getattr(stage, "stage_id", ""))
-        title = str(getattr(stage, "title", stage_id))
-        if stage_id:
-            stages.append((stage_id, title))
+    for stage in snapshot.stages.values():
+        stage_id = stage.stage_id.strip()
+        if not stage_id:
+            continue
+        title = stage.title.strip() or stage_id
+        stages.append((stage_id, title))
     return stages
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Launch the PySide6 progress board")
-    parser.add_argument("--snapshot", required=True, help="Path to progress snapshot JSON")
+    parser.add_argument(
+        "--snapshot", required=True, help="Path to progress snapshot JSON"
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    snapshot_path = Path(args.snapshot).resolve()
+    snapshot_arg = cast("str", args.snapshot)
+    snapshot_path = Path(snapshot_arg).resolve()
     definitions = _current_stage_layout(snapshot_path)
     if not definitions:
         print("No stages reported yet; using default template.")

@@ -1,22 +1,24 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from x_make_common_x.progress_snapshot import (
     create_progress_snapshot,
     write_progress_snapshot,
 )
+
 from x_make_progress_board_x.x_cls_make_progress_board_x import (
+    StageSummary,
     XClsMakeProgressBoardX,
     main_json,
 )
 
 
-def _read_stage_ids(stage_definitions: list[dict[str, str]]) -> list[str]:
-    return [entry["id"] for entry in stage_definitions]
+def _read_stage_ids(stage_definitions: Sequence[StageSummary]) -> list[str]:
+    return [str(entry["id"]) for entry in stage_definitions if "id" in entry]
 
 
 def test_main_json_uses_snapshot_when_available(tmp_path: Path) -> None:
@@ -29,17 +31,22 @@ def test_main_json_uses_snapshot_when_available(tmp_path: Path) -> None:
         "parameters": {"snapshot_path": str(snapshot_path)},
     }
 
-    result = cast("dict[str, Any]", main_json(payload))
+    result = main_json(payload)
     assert isinstance(result["snapshot_path"], str)
     assert result["status"] == "success"
     assert result["schema_version"] == "x_make_progress_board_x.run/1.0"
     assert Path(result["snapshot_path"]) == snapshot_path
 
-    stage_defs = cast("list[dict[str, str]]", result["stage_definitions"])
+    stage_defs_obj = result["stage_definitions"]
+    assert isinstance(stage_defs_obj, list)
+    stage_defs = [cast("StageSummary", entry) for entry in stage_defs_obj]
     assert _read_stage_ids(stage_defs) == ["alpha", "beta"]
+    assert "title" in stage_defs[0]
     assert stage_defs[0]["title"] == "Alpha"
 
-    metadata = cast("dict[str, Any]", result["metadata"])
+    metadata_obj = result["metadata"]
+    assert isinstance(metadata_obj, Mapping)
+    metadata = cast("Mapping[str, object]", metadata_obj)
     assert metadata["snapshot_exists"] is True
     assert metadata["fallback_applied"] is False
     assert metadata["launched"] is False
@@ -53,14 +60,20 @@ def test_main_json_applies_fallback_when_snapshot_missing(tmp_path: Path) -> Non
         "parameters": {"snapshot_path": str(missing_snapshot)},
     }
 
-    result = cast("dict[str, Any]", main_json(payload))
+    result = main_json(payload)
     assert result["status"] == "success"
-    stage_defs = cast("list[dict[str, str]]", result["stage_definitions"])
-    assert stage_defs == [
-        {"id": "environment", "title": "Environment"},
-    ]
+    stage_defs_obj = result["stage_definitions"]
+    assert isinstance(stage_defs_obj, list)
+    stage_defs = [cast("StageSummary", entry) for entry in stage_defs_obj]
+    assert len(stage_defs) == 1
+    stage_def = stage_defs[0]
+    assert "id" in stage_def
+    assert stage_def["id"] == "environment"
+    assert stage_def.get("title") == "Environment"
 
-    metadata = cast("dict[str, Any]", result["metadata"])
+    metadata_obj = result["metadata"]
+    assert isinstance(metadata_obj, Mapping)
+    metadata = cast("Mapping[str, object]", metadata_obj)
     assert metadata["snapshot_exists"] is False
     assert metadata["fallback_applied"] is True
     assert metadata["launched"] is False
@@ -74,7 +87,7 @@ def test_launch_with_injected_runner_and_worker(tmp_path: Path) -> None:
     def fake_runner(
         *,
         snapshot_path: Path,
-    stage_definitions: Sequence[tuple[str, str]],
+        stage_definitions: Sequence[tuple[str, str]],
         worker_done_event: threading.Event,
     ) -> None:
         observed["snapshot_path"] = snapshot_path
@@ -95,7 +108,7 @@ def test_launch_with_injected_runner_and_worker(tmp_path: Path) -> None:
         runner=fake_runner,
     )
 
-    metadata = cast("dict[str, Any]", board.launch(worker=fake_worker))
+    metadata = board.launch(worker=fake_worker)
 
     assert observed["snapshot_path"] == board.snapshot_path
     assert observed["stage_definitions"] == stage_definitions
@@ -110,6 +123,6 @@ def test_launch_with_injected_runner_and_worker(tmp_path: Path) -> None:
 
 
 def test_main_json_invalid_payload_returns_failure() -> None:
-    result = cast("dict[str, Any]", main_json({"command": "unexpected"}))
+    result = main_json({"command": "unexpected"})
     assert result["status"] == "failure"
     assert "input payload failed validation" in cast("str", result["message"])

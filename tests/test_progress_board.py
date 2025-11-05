@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
@@ -23,7 +24,7 @@ def test_launch_board_in_thread_invokes_worker(
     def fake_run_progress_board(
         *,
         snapshot_path: Path,
-        stage_definitions,
+        stage_definitions: Sequence[tuple[str, str]],
         worker_done_event: threading.Event,
     ) -> None:
         observed["snapshot_path"] = snapshot_path
@@ -67,7 +68,7 @@ def test_cli_main_invokes_progress_board(
     def fake_run_progress_board(
         *,
         snapshot_path: Path,
-        stage_definitions,
+        stage_definitions: Sequence[tuple[str, str]],
         worker_done_event: threading.Event,
     ) -> None:
         observed["snapshot_path"] = snapshot_path

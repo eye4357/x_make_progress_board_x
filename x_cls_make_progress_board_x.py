@@ -10,7 +10,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
-from typing import IO, Protocol, TypedDict, cast
+from typing import IO, Protocol, Required, TypedDict, cast
 
 from x_make_common_x.json_contracts import validate_payload
 from x_make_common_x.progress_snapshot import load_progress_snapshot
@@ -23,14 +23,26 @@ from x_make_progress_board_x.json_contracts import (
 
 try:  # pragma: no cover - optional runtime dependency
     from x_make_progress_board_x.progress_board_widget import (
-        run_progress_board as _DEFAULT_BOARD_RUNNER,
+        run_progress_board as _run_progress_board,
     )
 except Exception:  # pragma: no cover - resolved dynamically when PySide6 exists
-    _DEFAULT_BOARD_RUNNER: BoardRunner | None = None
+    DEFAULT_BOARD_RUNNER: BoardRunner | None = None
 else:
-    _DEFAULT_BOARD_RUNNER = cast("BoardRunner", _DEFAULT_BOARD_RUNNER)
+    DEFAULT_BOARD_RUNNER = _run_progress_board
 
 SCHEMA_VERSION = "x_make_progress_board_x.run/1.0"
+
+StageTuple = tuple[str, str]
+
+
+class BoardRunner(Protocol):
+    def __call__(
+        self,
+        *,
+        snapshot_path: Path,
+        stage_definitions: Sequence[StageTuple],
+        worker_done_event: threading.Event,
+    ) -> None: ...
 
 
 class _SchemaValidationError(Exception):
@@ -50,22 +62,18 @@ def _load_validation_error() -> type[_SchemaValidationError]:
 
 ValidationErrorType: type[_SchemaValidationError] = _load_validation_error()
 
-StageTuple = tuple[str, str]
-
 
 class StageSummary(TypedDict, total=False):
     id: str
     title: str
 
 
-class BoardRunner(Protocol):
-    def __call__(
-        self,
-        *,
-        snapshot_path: Path,
-        stage_definitions: Sequence[StageTuple],
-        worker_done_event: threading.Event,
-    ) -> None: ...
+class PreviewPayload(TypedDict, total=False):
+    stage_definitions: Required[list[StageTuple]]
+    stage_count: Required[int]
+    snapshot_exists: Required[bool]
+    fallback_applied: Required[bool]
+    snapshot_error: str
 
 
 def _dedupe_preserve_order(items: Iterable[StageTuple]) -> list[StageTuple]:
@@ -95,7 +103,8 @@ def _normalize_stage_entry(candidate: object) -> StageTuple | None:
     if isinstance(candidate, Sequence) and not isinstance(
         candidate, (str, bytes, bytearray)
     ):
-        extracted = list(candidate)
+        typed_candidate = cast("Sequence[object]", candidate)
+        extracted = list(typed_candidate)
         if not extracted:
             return None
         stage_id = str(extracted[0]).strip()
@@ -111,10 +120,13 @@ def _normalize_stage_entry(candidate: object) -> StageTuple | None:
 
 
 def _normalize_stage_sequence(entries: object) -> list[StageTuple]:
-    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes, bytearray)):
+    if not isinstance(entries, Sequence) or isinstance(
+        entries, (str, bytes, bytearray)
+    ):
         return []
+    typed_entries = cast("Sequence[object]", entries)
     normalized: list[StageTuple] = []
-    for entry in entries:
+    for entry in typed_entries:
         stage = _normalize_stage_entry(entry)
         if stage is not None:
             normalized.append(stage)
@@ -131,7 +143,9 @@ def _normalize_single_stage(entry: object) -> StageTuple | None:
 class XClsMakeProgressBoardX:
     """Coordinate stage discovery and board launch orchestration."""
 
-    DEFAULT_SNAPSHOT = Path(__file__).resolve().parent / "reports" / "make_all_progress.json"
+    DEFAULT_SNAPSHOT = (
+        Path(__file__).resolve().parent / "reports" / "make_all_progress.json"
+    )
     DEFAULT_FALLBACK_STAGE: StageTuple = ("environment", "Environment")
 
     def __init__(
@@ -143,15 +157,22 @@ class XClsMakeProgressBoardX:
         runner: BoardRunner | None = None,
         ctx: object | None = None,
     ) -> None:
-        snapshot_candidate = Path(snapshot_path).expanduser() if snapshot_path else self.DEFAULT_SNAPSHOT
+        snapshot_candidate = (
+            Path(snapshot_path).expanduser() if snapshot_path else self.DEFAULT_SNAPSHOT
+        )
         with suppress(OSError):
             snapshot_candidate = snapshot_candidate.resolve()
         self.snapshot_path: Path = snapshot_candidate
-        self._provided_stage_definitions: list[StageTuple] | None = (
-            list(stage_definitions) if stage_definitions else None
-        )
+        provided: list[StageTuple] | None = None
+        if stage_definitions is not None:
+            provided = [
+                (str(stage_id), str(title))
+                for stage_id, title in stage_definitions
+                if str(stage_id).strip()
+            ]
+        self._provided_stage_definitions = provided
         self._fallback_stage: StageTuple = fallback_stage or self.DEFAULT_FALLBACK_STAGE
-        self._runner: BoardRunner | None = runner or _DEFAULT_BOARD_RUNNER
+        self._runner: BoardRunner | None = runner or DEFAULT_BOARD_RUNNER
         self._ctx = ctx
         self._resolved_stage_definitions: list[StageTuple] | None = None
         self._snapshot_exists: bool | None = None
@@ -175,8 +196,8 @@ class XClsMakeProgressBoardX:
             candidate_id = str(stage_id).strip()
             if not candidate_id:
                 continue
-            title = getattr(stage, "title", candidate_id) or candidate_id
-            collected.append((candidate_id, str(title)))
+            title = stage.title.strip() or candidate_id
+            collected.append((candidate_id, title))
         return collected
 
     def _resolve_stage_definitions(self) -> list[StageTuple]:
@@ -202,10 +223,10 @@ class XClsMakeProgressBoardX:
             return resolved
         return [self._fallback_stage]
 
-    def preview(self) -> dict[str, object]:
+    def preview(self) -> PreviewPayload:
         resolved = list(self._resolve_stage_definitions())
         effective = resolved if resolved else [self._fallback_stage]
-        summary: dict[str, object] = {
+        summary: PreviewPayload = {
             "stage_definitions": effective,
             "stage_count": len(effective),
             "snapshot_exists": bool(self._snapshot_exists),
@@ -215,12 +236,12 @@ class XClsMakeProgressBoardX:
             summary["snapshot_error"] = self._snapshot_error
         return summary
 
-    def launch(self, *, worker: Callable[[threading.Event], None] | None = None) -> dict[str, object]:
+    def launch(
+        self, *, worker: Callable[[threading.Event], None] | None = None
+    ) -> dict[str, object]:
         runner = self._runner
         if runner is None:
-            message = (
-                "Progress board runner unavailable; install PySide6 to launch the board."
-            )
+            message = "Progress board runner unavailable; install PySide6 to launch the board."
             raise RuntimeError(message)
         stage_definitions = self._effective_stage_definitions()
         worker_error: Exception | None = None
@@ -229,6 +250,7 @@ class XClsMakeProgressBoardX:
         if worker is None:
             worker_done_event.set()
         else:
+
             def _worker_wrapper() -> None:
                 nonlocal worker_error
                 try:
@@ -265,7 +287,9 @@ class XClsMakeProgressBoardX:
         return metadata
 
 
-def _failure_payload(message: str, *, details: Mapping[str, object] | None = None) -> dict[str, object]:
+def _failure_payload(
+    message: str, *, details: Mapping[str, object] | None = None
+) -> dict[str, object]:
     payload: dict[str, object] = {"status": "failure", "message": message}
     if details:
         payload["details"] = dict(details)
@@ -274,10 +298,13 @@ def _failure_payload(message: str, *, details: Mapping[str, object] | None = Non
     return payload
 
 
+_EMPTY_MAPPING: Mapping[str, object] = {}
+
+
 def _coerce_mapping(obj: object) -> Mapping[str, object]:
     if isinstance(obj, Mapping):
         return cast("Mapping[str, object]", obj)
-    return {}
+    return _EMPTY_MAPPING
 
 
 def _load_json_payload(file_path: str | None) -> Mapping[str, object]:
@@ -294,7 +321,9 @@ def _load_json_payload(file_path: str | None) -> Mapping[str, object]:
     return _load(sys.stdin)
 
 
-def main_json(payload: Mapping[str, object], *, ctx: object | None = None) -> dict[str, object]:
+def main_json(
+    payload: Mapping[str, object], *, ctx: object | None = None
+) -> dict[str, object]:
     try:
         validate_payload(payload, INPUT_SCHEMA)
     except ValidationErrorType as exc:
@@ -327,14 +356,17 @@ def main_json(payload: Mapping[str, object], *, ctx: object | None = None) -> di
     )
 
     preview = board.preview()
-    stage_def_summaries = [
-        cast("StageSummary", {"id": stage_id, "title": title})
-        for stage_id, title in cast("Sequence[StageTuple]", preview["stage_definitions"])
+    stage_defs_preview = preview["stage_definitions"]
+    stage_def_summaries: list[StageSummary] = [
+        {"id": stage_id, "title": title} for stage_id, title in stage_defs_preview
     ]
+    stage_count = preview["stage_count"]
+    snapshot_exists = preview["snapshot_exists"]
+    fallback_applied = preview["fallback_applied"]
     metadata: dict[str, object] = {
-        "stage_count": preview["stage_count"],
-        "snapshot_exists": preview["snapshot_exists"],
-        "fallback_applied": preview["fallback_applied"],
+        "stage_count": stage_count,
+        "snapshot_exists": snapshot_exists,
+        "fallback_applied": fallback_applied,
         "launched": False,
     }
     snapshot_error = preview.get("snapshot_error")
@@ -374,13 +406,20 @@ def main_json(payload: Mapping[str, object], *, ctx: object | None = None) -> di
     return result_payload
 
 
+class _JsonCliArgs(argparse.Namespace):
+    json: bool
+    json_file: str | None
+
+
 def _run_json_cli(args: Sequence[str]) -> None:
     parser = argparse.ArgumentParser(description="x_make_progress_board_x JSON runner")
-    parser.add_argument("--json", action="store_true", help="Read JSON payload from stdin")
+    parser.add_argument(
+        "--json", action="store_true", help="Read JSON payload from stdin"
+    )
     parser.add_argument("--json-file", type=str, help="Path to JSON payload file")
-    parsed = parser.parse_args(list(args))
-    json_flag = bool(getattr(parsed, "json", False))
-    json_file = getattr(parsed, "json_file", None)
+    parsed: _JsonCliArgs = parser.parse_args(list(args), namespace=_JsonCliArgs())
+    json_flag = parsed.json
+    json_file = parsed.json_file
     if not (json_flag or json_file):
         parser.error("JSON input required. Use --json for stdin or --json-file <path>.")
     payload = _load_json_payload(json_file)
