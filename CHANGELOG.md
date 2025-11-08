@@ -2,6 +2,14 @@
 
 All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning.
 
+## [0.1.1] - 2025-11-08
+### Added
+- Exported `__version__ = "0.1.1"` in the package to make the shipped version programmatically discoverable.
+- Added `requirements.txt` for the Operating Procedure in the README (PySide6 and jsonschema).
+
+### Maintenance
+- Prepared release notes and tagging per Change Control direction; no functional code changes.
+
 ## [0.1.0] - 2025-10-30
 ### Added
 - Packaged the PySide6 progress board with snapshot polling, repository detail view, and worker hand-off controller.
