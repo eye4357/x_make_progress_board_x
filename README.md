@@ -22,6 +22,14 @@ This package deploys the PySide6 progress board ahead of the command center. Whi
 
 The board opens in a PySide6 window and exits once all stages report completion and the worker thread signals done.
 
+### Color Semantics and Streaming Refresh
+- Green = `completed` (stage fully done)
+- Yellow = `attention` (finished with issues; board remains partially checked)
+- Red = `blocked` (hard failure)
+- Blue = `running`, Grey = `pending`
+
+When visitor streaming is enabled, the board reflects updates as events arrive—repositories populate progressively and the detail table shows the latest messages for the selected stage.
+
 ## Evidence Checks
 | Check | Command |
 | --- | --- |
