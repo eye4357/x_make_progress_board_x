@@ -14,7 +14,6 @@ from typing import IO, Protocol, Required, TypedDict, cast
 
 from x_make_common_x.json_contracts import validate_payload
 from x_make_common_x.progress_snapshot import load_progress_snapshot
-
 from x_make_progress_board_x.json_contracts import (
     ERROR_SCHEMA,
     INPUT_SCHEMA,
